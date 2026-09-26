@@ -334,6 +334,53 @@ h1 {
     background: var(--surface);
 }
 
+.batch-file-list {
+    display: grid;
+    max-height: 220px;
+    overflow: auto;
+    margin: -4px 0 14px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface);
+}
+
+.batch-file-row {
+    min-height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 12px;
+    border-bottom: 1px solid #edf0f4;
+}
+
+.batch-file-row:last-child {
+    border-bottom: 0;
+}
+
+.batch-file-name {
+    min-width: 0;
+    overflow: hidden;
+    color: #415065;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.batch-file-status {
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.batch-file-status.is-success {
+    color: var(--success);
+}
+
+.batch-file-status.is-error {
+    color: var(--danger);
+}
+
 .file-identity,
 .file-actions {
     min-width: 0;
@@ -1561,4 +1608,15 @@ textarea:focus-visible {
         transition-duration: .01ms !important;
         animation-duration: .01ms !important;
     }
+}
+
+.batch-download-button {
+    width: 100%;
+    min-height: 42px;
+    margin-top: 12px;
+}
+
+.batch-download-button svg {
+    width: 18px;
+    height: 18px;
 }

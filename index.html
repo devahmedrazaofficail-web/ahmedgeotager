@@ -16,6 +16,7 @@
     <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script defer src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/piexifjs@1.0.6/piexif.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script defer src="script.js"></script>
 </head>
 
@@ -54,16 +55,17 @@
                 </svg>Your images never leave your device.</p>
         </section>
 
-        <section id="upload-section" class="upload-section" aria-label="Upload a photo">
-            <input id="file-input" class="visually-hidden" type="file"
+        <section id="upload-section" class="upload-section" aria-label="Upload photos">
+            <input id="file-input" class="visually-hidden" type="file" multiple
                 accept=".jpg,.jpeg,.png,.webp,.heic,.heif,image/jpeg,image/png,image/webp,image/heic,image/heif">
             <button id="upload-dropzone" class="dropzone" type="button" aria-describedby="upload-help">
                 <span class="upload-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none">
                         <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" />
                     </svg></span>
-                <span class="dropzone-title">Drop your photo here</span>
+                <span class="dropzone-title">Drop photos here</span>
                 <span class="dropzone-browse">or <span>click to browse</span></span>
-                <span id="upload-help" class="format-note">JPG, JPEG, PNG, WebP, HEIC · One image at a time</span>
+                <span id="upload-help" class="format-note">JPG, JPEG, PNG, WebP, HEIC · Select or drop multiple
+                    images</span>
             </button>
             <p id="upload-error" class="form-message error-message" role="alert" hidden></p>
         </section>
@@ -86,6 +88,8 @@
                         </svg><span>Clear</span></button>
                 </div>
             </div>
+
+            <div id="batch-file-list" class="batch-file-list" aria-live="polite" hidden></div>
 
             <div class="workspace-grid">
                 <section class="panel map-panel" aria-labelledby="map-heading">
@@ -229,6 +233,11 @@
                                     <path d="M10 2.8v9.4m0 0 3.3-3.3M10 12.2 6.7 8.9M3.5 13.7v2.8h13v-2.8" />
                                 </svg><span>Download geotagged JPEG</span></button>
                         </div>
+                        <button id="batch-download-button" class="button button-download batch-download-button"
+                            type="button" hidden><svg viewBox="0 0 20 20" aria-hidden="true">
+                                <path
+                                    d="M10 2.8v9.4m0 0 3.3-3.3M10 12.2 6.7 8.9M3.5 13.7v2.8h13v-2.8M2.5 5.5h2m-2 3h2m9-3h2m-2 3h2" />
+                            </svg><span>Download all as ZIP (JPEG)</span></button>
                         <p class="format-limit"><span class="format-limit-dot"></span><span id="format-limit-copy">GPS
                                 metadata is embedded in JPEG, PNG, and WebP downloads. Some photo apps may not display
                                 GPS tags in PNG or WebP.</span></p>
@@ -277,8 +286,8 @@
                 </article>
                 <article class="guide-item"><span class="guide-number">03</span>
                     <h3>How to geotag a photo</h3>
-                    <p>Choose a photo, select a map location or enter coordinates, then write and verify the GPS tags
-                        before downloading it as JPEG, PNG, or WebP.</p>
+                    <p>Choose one or more photos, select a map location or enter coordinates, then write and verify the
+                        GPS tags before downloading individually or together in a ZIP.</p>
                 </article>
                 <article class="guide-item"><span class="guide-number">04</span>
                     <h3>Is my photo uploaded?</h3>

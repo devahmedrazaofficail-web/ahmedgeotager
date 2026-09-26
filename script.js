@@ -3,10 +3,12 @@
 
     const state = {
         file: null,
+        files: [],
         objectUrl: null,
         outputUrl: null,
         outputBlob: null,
         outputName: "",
+        outputs: [],
         map: null,
         marker: null,
         mapLocation: null,
@@ -30,7 +32,7 @@
             "latitude", "longitude", "latitude-error", "longitude-error", "apply-coordinates", "altitude", "altitude-error",
             "direction", "direction-error", "gps-time", "gps-time-error", "title", "description", "keywords", "artist",
             "copyright", "date-taken", "write-button", "write-progress", "progress-label", "progress-step", "progress-bar",
-            "operation-message", "download-options", "output-format", "compression-target", "download-button", "format-limit-copy", "existing-details", "exif-status", "exif-list", "reset-dialog", "confirm-reset"
+            "operation-message", "download-options", "output-format", "compression-target", "download-button", "batch-download-button", "batch-file-list", "format-limit-copy", "existing-details", "exif-status", "exif-list", "reset-dialog", "confirm-reset"
         ].forEach((id) => { elements[id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = document.getElementById(id); });
     }
 
@@ -44,8 +46,8 @@
     function bindEvents() {
         elements.uploadDropzone.addEventListener("click", () => elements.fileInput.click());
         elements.fileInput.addEventListener("change", (event) => {
-            const [file] = event.target.files || [];
-            if (file) handleFileUpload(file);
+            const files = Array.from(event.target.files || []);
+            if (files.length) handleFileUpload(files);
             event.target.value = "";
         });
         elements.uploadDropzone.addEventListener("dragover", (event) => {
@@ -58,8 +60,8 @@
         elements.uploadDropzone.addEventListener("drop", (event) => {
             event.preventDefault();
             elements.uploadDropzone.classList.remove("is-dragging");
-            const [file] = event.dataTransfer.files || [];
-            if (file) handleFileUpload(file);
+            const files = Array.from(event.dataTransfer.files || []);
+            if (files.length) handleFileUpload(files);
         });
         elements.searchForm.addEventListener("submit", (event) => {
             event.preventDefault();
@@ -70,6 +72,7 @@
         elements.fullscreenButton.addEventListener("click", toggleMapFullscreen);
         elements.writeButton.addEventListener("click", writeExifMetadata);
         elements.downloadButton.addEventListener("click", generateDownload);
+        elements.batchDownloadButton.addEventListener("click", downloadBatch);
         elements.outputFormat.addEventListener("change", updateDownloadOptions);
         elements.clearButton.addEventListener("click", () => elements.resetDialog.showModal());
         elements.confirmReset.addEventListener("click", (event) => {
@@ -99,22 +102,21 @@
         elements.uploadError.hidden = true;
     }
 
-    async function handleFileUpload(file) {
+    async function handleFileUpload(files) {
         clearUploadError();
+        const invalidFile = files.find((file) => !acceptedExtensions.has(file.name.split(".").pop().toLowerCase()) || file.size === 0);
+        if (invalidFile) {
+            showError(`${invalidFile.name} is empty or unsupported. Choose JPG, PNG, WebP, or HEIC images.`);
+            return;
+        }
+        const [file] = files;
         const extension = file.name.split(".").pop().toLowerCase();
-        if (!acceptedExtensions.has(extension)) {
-            showError("That file type is not supported. Choose a JPG, PNG, WebP, or HEIC image.");
-            return;
-        }
-        if (file.size === 0) {
-            showError("This file is empty. Choose a valid image file.");
-            return;
-        }
 
         clearImageResources();
         clearOutput();
         clearOperationMessage();
         clearCoordinateErrors();
+        state.files = files;
         state.file = file;
         state.objectUrl = URL.createObjectURL(file);
         elements.photoPreview.hidden = true;
@@ -149,7 +151,9 @@
         try {
             const imageInfo = await loadPreview(state.objectUrl);
             if (state.file !== file) return;
-            elements.fileDetails.textContent = `${formatBytes(file.size)} · ${imageInfo.width} × ${imageInfo.height} px · ${extension.toUpperCase()} · Preview ready`;
+            const selectionDetails = files.length > 1 ? ` · ${files.length} images selected` : "";
+            elements.fileDetails.textContent = `${formatBytes(file.size)} · ${imageInfo.width} × ${imageInfo.height} px · ${extension.toUpperCase()} · Preview ready${selectionDetails}`;
+            renderBatchFiles(files);
             await parseExif(file, imageInfo);
         } catch (error) {
             console.error("Image preview or EXIF parsing failed:", error);
@@ -478,7 +482,37 @@
     }
 
     function updateWriteAvailability() {
-        elements.writeButton.disabled = !state.file || state.isWriting;
+        elements.writeButton.disabled = !state.files.length || state.isWriting;
+        elements.writeButton.querySelector("span").textContent = state.files.length > 1
+            ? `Geotag ${state.files.length} photos`
+            : "Write GPS metadata";
+    }
+
+    function renderBatchFiles(files) {
+        elements.batchFileList.replaceChildren();
+        elements.batchFileList.hidden = files.length < 2;
+        if (files.length < 2) return;
+        files.forEach((file, index) => {
+            const row = document.createElement("div");
+            const name = document.createElement("span");
+            const status = document.createElement("span");
+            row.className = "batch-file-row";
+            name.className = "batch-file-name";
+            name.textContent = file.name;
+            status.className = "batch-file-status";
+            status.textContent = "Ready";
+            status.dataset.batchIndex = String(index);
+            row.append(name, status);
+            elements.batchFileList.append(row);
+        });
+    }
+
+    function updateBatchFileStatus(index, message, isError = false) {
+        const status = elements.batchFileList.querySelector(`[data-batch-index="${index}"]`);
+        if (!status) return;
+        status.textContent = message;
+        status.classList.toggle("is-error", isError);
+        status.classList.toggle("is-success", !isError && message !== "Ready");
     }
 
     function setFieldError(input, message) {
@@ -559,7 +593,7 @@
     }
 
     async function writeExifMetadata() {
-        if (!state.file || state.isWriting) return;
+        if (!state.files.length || state.isWriting) return;
         if (!window.piexif || !window.exifr) {
             showOperationMessage("The metadata tools did not load. Check your connection and reload this page before writing.", "error");
             return;
@@ -581,13 +615,71 @@
         clearOperationMessage();
         elements.writeProgress.hidden = false;
         try {
-            updateProgress("Preparing image", 1, 5);
+            renderBatchFiles(state.files);
+            let failed = 0;
+            for (let index = 0; index < state.files.length; index += 1) {
+                const file = state.files[index];
+                const progress = (label, step, total) => {
+                    updateProgress(`Photo ${index + 1}/${state.files.length}: ${label}`, index * total + step, state.files.length * total);
+                };
+                try {
+                    const output = await createGeotaggedImage(file, coordinates, progress);
+                    state.outputs.push(output);
+                    updateBatchFileStatus(index, `Geotagged · ${formatBytes(output.blob.size)}`);
+                } catch (error) {
+                    failed += 1;
+                    console.error(`Could not geotag ${file.name}:`, error);
+                    updateBatchFileStatus(index, "Failed", true);
+                }
+                await nextPaint();
+            }
+            if (!state.outputs.length) throw new Error("No images could be geotagged. Check the selected files and try again.");
+            if (state.outputs.length === 1 && state.files.length === 1) {
+                const [output] = state.outputs;
+                state.outputBlob = output.blob;
+                state.outputName = output.name;
+                state.outputUrl = URL.createObjectURL(output.blob);
+                elements.downloadOptions.hidden = false;
+                elements.downloadButton.hidden = false;
+                elements.batchDownloadButton.hidden = true;
+                elements.formatLimitCopy.textContent = "GPS metadata is embedded and verified in JPEG, PNG, and WebP downloads. Some photo apps may not display GPS tags in PNG or WebP.";
+                updateDownloadOptions();
+            } else {
+                elements.downloadOptions.hidden = true;
+                elements.batchDownloadButton.hidden = false;
+                elements.formatLimitCopy.textContent = "The ZIP archive contains successfully geotagged JPEGs. Files marked failed are not included.";
+            }
+            updateProgress("Batch complete", state.files.length, state.files.length);
+            showOperationMessage(
+                failed ? `Geotagged ${state.outputs.length} of ${state.files.length} photos. Failed images are marked in the list.` : state.outputs.length === 1 ? "GPS metadata successfully written and verified" : `GPS metadata successfully written and verified for all ${state.outputs.length} photos.`,
+                failed ? "error" : "success"
+            );
+        } catch (error) {
+            console.error("EXIF writing or verification failed:", error);
+            showOperationMessage(error.message || "Metadata verification failed. Check that the image is valid and try again.", "error");
+            clearOutput();
+        } finally {
+            state.isWriting = false;
+            updateWriteAvailability();
+        }
+    }
+
+    async function createGeotaggedImage(file, coordinates, onProgress) {
+        let temporaryUrl = null;
+        try {
+            onProgress("Preparing image", 1, 5);
             await nextPaint();
-            const extension = state.file.name.split(".").pop().toLowerCase();
-            const originalDataUrl = writableExtensions.has(extension)
-                ? await readFileAsDataUrl(state.file)
-                : await convertImageToJpegDataUrl(state.objectUrl);
-            updateProgress("Validating coordinates", 2, 5);
+            const extension = file.name.split(".").pop().toLowerCase();
+            let originalDataUrl;
+            if (writableExtensions.has(extension)) {
+                originalDataUrl = await readFileAsDataUrl(file);
+            } else {
+                temporaryUrl = URL.createObjectURL(file);
+                originalDataUrl = await convertImageToJpegDataUrl(temporaryUrl);
+                URL.revokeObjectURL(temporaryUrl);
+                temporaryUrl = null;
+            }
+            onProgress("Validating coordinates", 2, 5);
             await nextPaint();
             const exif = window.piexif.load(originalDataUrl);
             exif["0th"] ||= {};
@@ -596,31 +688,17 @@
             writeGpsTags(exif.GPS);
             writeOptionalMetadata(exif);
             const exifBytes = window.piexif.dump(exif);
-            updateProgress("Writing EXIF metadata", 3, 5);
+            onProgress("Writing EXIF metadata", 3, 5);
             await nextPaint();
             const writtenDataUrl = window.piexif.insert(exifBytes, originalDataUrl);
-            const generatedBlob = await dataUrlToBlob(writtenDataUrl);
-            const generatedName = makeOutputFilename(state.file.name);
-            updateProgress("Verifying GPS metadata", 4, 5);
+            const blob = await dataUrlToBlob(writtenDataUrl);
+            onProgress("Verifying GPS metadata", 4, 5);
             await nextPaint();
-            const verified = await verifyExifMetadata(generatedBlob, coordinates);
-            if (!verified) throw new Error("GPS metadata could not be confirmed after writing");
-            state.outputBlob = generatedBlob;
-            state.outputUrl = URL.createObjectURL(generatedBlob);
-            state.outputName = generatedName;
-            updateProgress("Ready to download", 5, 5);
-            showOperationMessage("✓ GPS metadata successfully written and verified", "success");
-            elements.downloadOptions.hidden = false;
-            elements.downloadButton.hidden = false;
-            elements.formatLimitCopy.textContent = "GPS metadata is embedded and verified in JPEG, PNG, and WebP downloads. Some photo apps may not display GPS tags in PNG or WebP.";
-            updateDownloadOptions();
-        } catch (error) {
-            console.error("EXIF writing or verification failed:", error);
-            showOperationMessage("Metadata verification failed. The image was not marked as successfully geotagged. Check that the image is valid and try again.", "error");
-            clearOutput();
+            if (!await verifyExifMetadata(blob, coordinates)) throw new Error("GPS metadata could not be confirmed after writing");
+            onProgress("Ready", 5, 5);
+            return { blob, name: makeOutputFilename(file.name) };
         } finally {
-            state.isWriting = false;
-            updateWriteAvailability();
+            if (temporaryUrl) URL.revokeObjectURL(temporaryUrl);
         }
     }
 
@@ -758,7 +836,9 @@
         state.outputUrl = null;
         state.outputBlob = null;
         state.outputName = "";
+        state.outputs = [];
         elements.downloadButton.hidden = true;
+        elements.batchDownloadButton.hidden = true;
         elements.downloadOptions.hidden = true;
         elements.formatLimitCopy.textContent = "GPS metadata will be embedded in the selected JPEG, PNG, or WebP download.";
         elements.writeProgress.hidden = true;
@@ -828,6 +908,42 @@
         anchor.click();
         anchor.remove();
         if (downloadUrl !== state.outputUrl) window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    }
+
+    async function downloadBatch() {
+        if (!state.outputs.length) return;
+        if (!window.JSZip) {
+            showOperationMessage("The ZIP tool did not load. Check your connection and reload the page before downloading the batch.", "error");
+            return;
+        }
+        elements.batchDownloadButton.disabled = true;
+        try {
+            const zip = new window.JSZip();
+            const usedNames = new Map();
+            state.outputs.forEach((output) => {
+                const dot = output.name.lastIndexOf(".");
+                const stem = dot > 0 ? output.name.slice(0, dot) : output.name;
+                const extension = dot > 0 ? output.name.slice(dot) : "";
+                const count = usedNames.get(output.name) || 0;
+                usedNames.set(output.name, count + 1);
+                zip.file(count ? `${stem} (${count + 1})${extension}` : output.name, output.blob);
+            });
+            const archive = await zip.generateAsync({ type: "blob" });
+            const url = URL.createObjectURL(archive);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = "geotagged-photos.zip";
+            document.body.append(anchor);
+            anchor.click();
+            anchor.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+            showOperationMessage(`Downloaded ${state.outputs.length} geotagged JPEG photos as a ZIP archive.`, "success");
+        } catch (error) {
+            console.error("ZIP generation failed:", error);
+            showOperationMessage("The ZIP archive could not be created. Try downloading the batch again.", "error");
+        } finally {
+            elements.batchDownloadButton.disabled = false;
+        }
     }
 
     async function createTargetSizeImage(image, format, targetBytes, exifTiff) {
@@ -1095,6 +1211,7 @@
         state.mapLocation = null;
         state.location = null;
         state.file = null;
+        state.files = [];
         state.isWriting = false;
         elements.fileInput.value = "";
         elements.fileName.textContent = "";
@@ -1115,6 +1232,8 @@
         elements.exifStatus.classList.remove("is-detected");
         renderExifRows({});
         elements.workspace.hidden = true;
+        elements.batchFileList.replaceChildren();
+        elements.batchFileList.hidden = true;
         elements.uploadSection.hidden = false;
         setMapMessage("Search for a place or click the map to choose a point.");
         if (state.map) state.map.setView([20, 0], 2);
