@@ -617,22 +617,36 @@
         try {
             renderBatchFiles(state.files);
             let failed = 0;
-            for (let index = 0; index < state.files.length; index += 1) {
-                const file = state.files[index];
-                const progress = (label, step, total) => {
-                    updateProgress(`Photo ${index + 1}/${state.files.length}: ${label}`, index * total + step, state.files.length * total);
-                };
-                try {
-                    const output = await createGeotaggedImage(file, coordinates, progress);
-                    state.outputs.push({ ...output, sourceIndex: index });
-                    updateBatchFileStatus(index, `Geotagged · ${formatBytes(output.blob.size)}`);
-                } catch (error) {
-                    failed += 1;
-                    console.error(`Could not geotag ${file.name}:`, error);
-                    updateBatchFileStatus(index, "Failed", true);
+            let completedCount = 0;
+            let nextIndex = 0;
+            let progressValue = 0;
+            const processNextFile = async () => {
+                while (nextIndex < state.files.length) {
+                    const index = nextIndex;
+                    nextIndex += 1;
+                    const file = state.files[index];
+                    const progress = (label, step, total) => {
+                        progressValue = Math.max(progressValue, completedCount + step / total);
+                        updateProgress(`Photo ${index + 1}/${state.files.length}: ${label}`, progressValue, state.files.length);
+                    };
+                    try {
+                        const output = await createGeotaggedImage(file, coordinates, progress);
+                        state.outputs.push({ ...output, sourceIndex: index });
+                        updateBatchFileStatus(index, `Geotagged · ${formatBytes(output.blob.size)}`);
+                    } catch (error) {
+                        failed += 1;
+                        console.error(`Could not geotag ${file.name}:`, error);
+                        updateBatchFileStatus(index, "Failed", true);
+                    }
+                    completedCount += 1;
+                    progressValue = Math.max(progressValue, completedCount);
+                    updateProgress(`Processed ${completedCount}/${state.files.length} photos`, progressValue, state.files.length);
+                    await nextPaint();
                 }
-                await nextPaint();
-            }
+            };
+            const workerCount = Math.min(state.files.length, 2);
+            await Promise.all(Array.from({ length: workerCount }, () => processNextFile()));
+            state.outputs.sort((left, right) => left.sourceIndex - right.sourceIndex);
             if (!state.outputs.length) throw new Error("No images could be geotagged. Check the selected files and try again.");
             if (state.outputs.length === 1 && state.files.length === 1) {
                 const [output] = state.outputs;
