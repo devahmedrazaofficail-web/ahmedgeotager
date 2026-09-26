@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description"
+        content="Free online image geotagging tool. Add GPS latitude and longitude metadata to JPEG photos directly in your browser. No uploads required.">
+    <meta name="theme-color" content="#f6f8fb">
+    <title>Free Image Geotagging Tool – Add GPS Metadata to Photos</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+    <link rel="stylesheet" href="style.css">
+    <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/piexifjs@1.0.6/piexif.js"></script>
+    <script defer src="script.js"></script>
+</head>
+
+<body>
+    <header class="site-header">
+        <div class="header-inner page-width">
+            <a class="brand" href="#top" aria-label="GeoTag Image home">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none">
+                        <path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0Z" />
+                        <circle cx="12" cy="10" r="2.5" />
+                    </svg>
+                </span>
+                <span>GeoTag <b>Image</b></span>
+            </a>
+            <p class="header-subtitle">Add GPS location metadata to your photos</p>
+            <div class="trust-list" aria-label="Service details">
+                <span class="trust-pill"><span class="trust-dot"></span>100% Client-Side</span>
+                <span class="trust-item">No uploads</span>
+                <span class="trust-item">Free</span>
+            </div>
+        </div>
+    </header>
+
+    <main id="top" class="page-width">
+        <section class="intro" aria-labelledby="page-title">
+            <div>
+                <p class="eyebrow"><span class="eyebrow-rule"></span>YOUR PHOTOS, YOUR DEVICE</p>
+                <h1 id="page-title">Geotag Your Photos</h1>
+                <p class="intro-copy">Add accurate GPS coordinates and location metadata to your images, right in your
+                    browser.</p>
+            </div>
+            <p class="privacy-note"><svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="M10 2.5 16 5v4.2c0 4-2.6 6.7-6 8.3-3.4-1.6-6-4.3-6-8.3V5l6-2.5Z" />
+                    <path d="m7.5 10 1.7 1.7 3.4-3.5" />
+                </svg>Your images never leave your device.</p>
+        </section>
+
+        <section id="upload-section" class="upload-section" aria-label="Upload a photo">
+            <input id="file-input" class="visually-hidden" type="file"
+                accept=".jpg,.jpeg,.png,.webp,.heic,.heif,image/jpeg,image/png,image/webp,image/heic,image/heif">
+            <button id="upload-dropzone" class="dropzone" type="button" aria-describedby="upload-help">
+                <span class="upload-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none">
+                        <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" />
+                    </svg></span>
+                <span class="dropzone-title">Drop your photo here</span>
+                <span class="dropzone-browse">or <span>click to browse</span></span>
+                <span id="upload-help" class="format-note">JPG, JPEG, PNG, WebP, HEIC · One image at a time</span>
+            </button>
+            <p id="upload-error" class="form-message error-message" role="alert" hidden></p>
+        </section>
+
+        <section id="workspace" class="workspace" aria-label="Photo geotagging workspace" hidden>
+            <div class="file-toolbar">
+                <div class="file-identity">
+                    <div class="file-thumb"><img id="photo-preview" alt="Preview of the selected photo" hidden><span
+                            id="file-placeholder" aria-hidden="true">IMG</span></div>
+                    <div class="file-copy">
+                        <p id="file-name" class="file-name"></p>
+                        <p id="file-details" class="file-details"></p>
+                    </div>
+                </div>
+                <div class="file-actions">
+                    <span id="format-badge" class="format-badge"></span>
+                    <button id="clear-button" class="button button-quiet" type="button"
+                        title="Clear photo and metadata"><svg viewBox="0 0 20 20" aria-hidden="true">
+                            <path d="M3.5 5.5h13M8 5.5V3.7h4v1.8m-6.5 0 .7 11h7.6l.7-11M8.3 8.5v5m3.4-5v5" />
+                        </svg><span>Clear</span></button>
+                </div>
+            </div>
+
+            <div class="workspace-grid">
+                <section class="panel map-panel" aria-labelledby="map-heading">
+                    <div class="panel-heading map-heading-row">
+                        <div>
+                            <p class="section-kicker">01 / LOCATION</p>
+                            <h2 id="map-heading">Choose a location</h2>
+                        </div>
+                        <button id="fullscreen-button" class="icon-button" type="button"
+                            aria-label="Enter map fullscreen" title="Fullscreen map"><svg viewBox="0 0 20 20"
+                                aria-hidden="true">
+                                <path d="M7 3.5H3.5V7M13 3.5h3.5V7M3.5 13v3.5H7M16.5 13v3.5H13" />
+                            </svg></button>
+                    </div>
+                    <form id="search-form" class="search-form" role="search">
+                        <label class="visually-hidden" for="location-search">Search city, address or place</label>
+                        <span class="search-icon" aria-hidden="true"><svg viewBox="0 0 20 20">
+                                <circle cx="8.8" cy="8.8" r="5.6" />
+                                <path d="m13 13 4 4" />
+                            </svg></span>
+                        <input id="location-search" type="search" placeholder="Search city, address or place..."
+                            autocomplete="off" maxlength="180">
+                        <button id="search-button" class="button button-primary button-search"
+                            type="submit">Search</button>
+                    </form>
+                    <div id="search-results" class="search-results" hidden></div>
+                    <p id="map-message" class="map-message" role="status" aria-live="polite">Search for a place or click
+                        the map to choose a point.</p>
+                    <div id="map" class="map" role="application"
+                        aria-label="OpenStreetMap. Click to choose a photo location."></div>
+                    <div class="map-footer"><span class="map-tip"><span class="tip-dot"></span>Click map or drag the pin
+                            to set location</span><span class="attribution">© <a
+                                href="https://www.openstreetmap.org/copyright" target="_blank"
+                                rel="noreferrer">OpenStreetMap</a> contributors</span></div>
+                    <div class="location-summary" aria-live="polite">
+                        <div class="location-pin" aria-hidden="true"><svg viewBox="0 0 20 20">
+                                <path d="M16 8.5c0 4.3-6 9.5-6 9.5S4 12.8 4 8.5a6 6 0 1 1 12 0Z" />
+                                <circle cx="10" cy="8.5" r="2" />
+                            </svg></div>
+                        <div class="location-copy"><span id="location-name" class="location-name">No location
+                                selected</span><span id="location-context" class="location-context">Choose a point on
+                                the map or search for a place</span></div>
+                        <button id="use-map-button" class="text-button" type="button" disabled>Use map location</button>
+                    </div>
+                </section>
+
+                <div class="right-column">
+                    <section class="panel gps-panel" aria-labelledby="gps-heading">
+                        <div class="panel-heading">
+                            <p class="section-kicker">02 / GPS DATA</p>
+                            <h2 id="gps-heading">GPS location</h2>
+                            <p class="panel-description">Set the exact coordinates to write into your photo.</p>
+                        </div>
+                        <div class="coordinate-grid">
+                            <div class="field"><label for="latitude">Latitude</label>
+                                <div class="input-suffix"><input id="latitude" name="latitude" inputmode="decimal"
+                                        autocomplete="off" placeholder="40.712776"
+                                        aria-describedby="latitude-error"><span>°</span></div>
+                                <p id="latitude-error" class="field-error" hidden></p>
+                            </div>
+                            <div class="field"><label for="longitude">Longitude</label>
+                                <div class="input-suffix"><input id="longitude" name="longitude" inputmode="decimal"
+                                        autocomplete="off" placeholder="-74.005974"
+                                        aria-describedby="longitude-error"><span>°</span></div>
+                                <p id="longitude-error" class="field-error" hidden></p>
+                            </div>
+                        </div>
+                        <button id="apply-coordinates" class="button button-secondary apply-button" type="button">Apply
+                            coordinates</button>
+                        <div class="field-divider"></div>
+                        <div class="field-grid">
+                            <div class="field"><label for="altitude">Altitude <span
+                                        class="optional">optional</span></label>
+                                <div class="input-suffix"><input id="altitude" inputmode="decimal" autocomplete="off"
+                                        placeholder="e.g. 12.5"><span>m</span></div>
+                                <p id="altitude-error" class="field-error" hidden></p>
+                            </div>
+                            <div class="field"><label for="direction">GPS direction <span
+                                        class="optional">optional</span></label>
+                                <div class="input-suffix"><input id="direction" inputmode="decimal" autocomplete="off"
+                                        placeholder="0–359.99"><span>°</span></div>
+                                <p id="direction-error" class="field-error" hidden></p>
+                            </div>
+                            <div class="field field-full"><label for="gps-time">GPS timestamp <span
+                                        class="optional">optional · UTC</span></label><input id="gps-time"
+                                    type="datetime-local" step="1">
+                                <p id="gps-time-error" class="field-error" hidden></p>
+                            </div>
+                        </div>
+                        <div class="field-divider"></div>
+                        <details class="metadata-details">
+                            <summary>Additional metadata <span>Optional photo details</span></summary>
+                            <div class="metadata-fields">
+                                <div class="field"><label for="title">Title</label><input id="title" maxlength="180"
+                                        autocomplete="off" placeholder="Photo title"></div>
+                                <div class="field"><label for="artist">Artist / author</label><input id="artist"
+                                        maxlength="180" autocomplete="off" placeholder="Name"></div>
+                                <div class="field field-full"><label for="description">Description</label><textarea
+                                        id="description" rows="2" maxlength="1000"
+                                        placeholder="A short description"></textarea></div>
+                                <div class="field field-full"><label for="keywords">Keywords <span
+                                            class="optional">comma separated</span></label><input id="keywords"
+                                        maxlength="500" autocomplete="off" placeholder="travel, landscape"></div>
+                                <div class="field"><label for="copyright">Copyright</label><input id="copyright"
+                                        maxlength="180" autocomplete="off" placeholder="Copyright holder"></div>
+                                <div class="field"><label for="date-taken">Date taken</label><input id="date-taken"
+                                        type="datetime-local" step="1"></div>
+                            </div>
+                        </details>
+                        <button id="write-button" class="button button-primary write-button" type="button" disabled><svg
+                                viewBox="0 0 20 20" aria-hidden="true">
+                                <path d="M10 2.7 15.7 5v4c0 3.8-2.4 6.4-5.7 8-3.3-1.6-5.7-4.2-5.7-8V5L10 2.7Z" />
+                                <path d="m7.6 9.8 1.6 1.6 3.2-3.3" />
+                            </svg><span>Write GPS metadata</span></button>
+                        <div id="write-progress" class="write-progress" aria-live="polite" hidden>
+                            <div class="progress-topline"><span id="progress-label">Preparing image…</span><span
+                                    id="progress-step"></span></div>
+                            <div class="progress-track"><span id="progress-bar"></span></div>
+                        </div>
+                        <div id="operation-message" class="operation-message" role="status" aria-live="polite" hidden>
+                        </div>
+                        <button id="download-button" class="button button-download" type="button" hidden><svg
+                                viewBox="0 0 20 20" aria-hidden="true">
+                                <path d="M10 2.8v9.4m0 0 3.3-3.3M10 12.2 6.7 8.9M3.5 13.7v2.8h13v-2.8" />
+                            </svg>Download geotagged image</button>
+                        <p class="format-limit"><span class="format-limit-dot"></span>GPS writing is supported for JPEG
+                            images. Other formats can be previewed, but not reliably edited.</p>
+                    </section>
+
+                    <section class="panel existing-panel" aria-labelledby="existing-heading">
+                        <details id="existing-details">
+                            <summary class="existing-summary"><span><span class="section-kicker">03 / IMAGE
+                                        DETAILS</span><strong id="existing-heading">Existing photo
+                                        metadata</strong></span><span id="exif-status" class="metadata-status">Not read
+                                    yet</span></summary>
+                            <dl id="exif-list" class="exif-list"></dl>
+                        </details>
+                    </section>
+                </div>
+            </div>
+        </section>
+
+        <section class="privacy-band" aria-labelledby="privacy-heading">
+            <div class="privacy-icon" aria-hidden="true"><svg viewBox="0 0 24 24">
+                    <path d="M12 3 19 6v4.9c0 4.6-3 7.7-7 9.6-4-1.9-7-5-7-9.6V6l7-3Z" />
+                    <path d="m9 12 2 2 4-4" />
+                </svg></div>
+            <div>
+                <h2 id="privacy-heading">Private by design</h2>
+                <p>Your photos are processed locally in your browser. No image is uploaded to a server.</p>
+            </div>
+            <span class="privacy-band-label">LOCAL PROCESSING</span>
+        </section>
+
+        <section class="guide-section" aria-labelledby="guide-heading">
+            <div class="guide-heading">
+                <p class="eyebrow"><span class="eyebrow-rule"></span>THE DETAILS</p>
+                <h2 id="guide-heading">A little about geotagging</h2>
+            </div>
+            <div class="guide-grid">
+                <article class="guide-item"><span class="guide-number">01</span>
+                    <h3>What is photo geotagging?</h3>
+                    <p>Geotagging adds geographic coordinates to a photo's metadata. It can help you remember where a
+                        moment happened and organize images by place.</p>
+                </article>
+                <article class="guide-item"><span class="guide-number">02</span>
+                    <h3>How does GPS metadata work?</h3>
+                    <p>JPEG photos can store latitude and longitude in EXIF GPS tags. Coordinates are encoded as
+                        degrees, minutes, and seconds with a direction reference.</p>
+                </article>
+                <article class="guide-item"><span class="guide-number">03</span>
+                    <h3>How to geotag a photo</h3>
+                    <p>Choose a JPEG, select a map location or enter coordinates, then write and verify the GPS tags
+                        before downloading the updated original.</p>
+                </article>
+                <article class="guide-item"><span class="guide-number">04</span>
+                    <h3>Is my photo uploaded?</h3>
+                    <p>No. Image data stays in your browser. Only a place name or coordinates are sent to
+                        OpenStreetMap's geocoding service when you search or request a location label.</p>
+                </article>
+            </div>
+        </section>
+    </main>
+
+    <footer class="site-footer">
+        <div class="page-width"><span>GeoTag Image</span><span>Local photo processing · <a
+                    href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">Map data ©
+                    OpenStreetMap</a></span></div>
+    </footer>
+
+    <dialog id="reset-dialog" class="reset-dialog" aria-labelledby="reset-title">
+        <form method="dialog">
+            <p class="section-kicker">CLEAR WORKSPACE</p>
+            <h2 id="reset-title">Clear this photo?</h2>
+            <p>The photo, coordinates, metadata edits, and generated download will be removed from this workspace.</p>
+            <div class="dialog-actions"><button class="button button-quiet" value="cancel">Keep editing</button><button
+                    id="confirm-reset" class="button button-danger" value="clear">Clear photo</button></div>
+        </form>
+    </dialog>
+</body>
+
+</html>
