@@ -30,7 +30,7 @@
             "latitude", "longitude", "latitude-error", "longitude-error", "apply-coordinates", "altitude", "altitude-error",
             "direction", "direction-error", "gps-time", "gps-time-error", "title", "description", "keywords", "artist",
             "copyright", "date-taken", "write-button", "write-progress", "progress-label", "progress-step", "progress-bar",
-            "operation-message", "download-button", "existing-details", "exif-status", "exif-list", "reset-dialog", "confirm-reset"
+            "operation-message", "download-options", "output-format", "download-button", "format-limit-copy", "existing-details", "exif-status", "exif-list", "reset-dialog", "confirm-reset"
         ].forEach((id) => { elements[id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = document.getElementById(id); });
     }
 
@@ -70,6 +70,7 @@
         elements.fullscreenButton.addEventListener("click", toggleMapFullscreen);
         elements.writeButton.addEventListener("click", writeExifMetadata);
         elements.downloadButton.addEventListener("click", generateDownload);
+        elements.outputFormat.addEventListener("change", updateDownloadOptions);
         elements.clearButton.addEventListener("click", () => elements.resetDialog.showModal());
         elements.confirmReset.addEventListener("click", (event) => {
             if (event.submitter?.value === "cancel") return;
@@ -477,8 +478,7 @@
     }
 
     function updateWriteAvailability() {
-        const extension = state.file?.name.split(".").pop().toLowerCase();
-        elements.writeButton.disabled = !state.file || !writableExtensions.has(extension) || state.isWriting;
+        elements.writeButton.disabled = !state.file || state.isWriting;
     }
 
     function setFieldError(input, message) {
@@ -560,11 +560,6 @@
 
     async function writeExifMetadata() {
         if (!state.file || state.isWriting) return;
-        const extension = state.file.name.split(".").pop().toLowerCase();
-        if (!writableExtensions.has(extension)) {
-            showOperationMessage("GPS metadata writing is currently supported for JPEG images. This image format can be previewed, but reliable EXIF GPS writing is not available.", "error");
-            return;
-        }
         if (!window.piexif || !window.exifr) {
             showOperationMessage("The metadata tools did not load. Check your connection and reload this page before writing.", "error");
             return;
@@ -586,9 +581,12 @@
         clearOperationMessage();
         elements.writeProgress.hidden = false;
         try {
-            updateProgress("Reading original image", 1, 5);
+            updateProgress("Preparing image", 1, 5);
             await nextPaint();
-            const originalDataUrl = await readFileAsDataUrl(state.file);
+            const extension = state.file.name.split(".").pop().toLowerCase();
+            const originalDataUrl = writableExtensions.has(extension)
+                ? await readFileAsDataUrl(state.file)
+                : await convertImageToJpegDataUrl(state.objectUrl);
             updateProgress("Validating coordinates", 2, 5);
             await nextPaint();
             const exif = window.piexif.load(originalDataUrl);
@@ -612,7 +610,10 @@
             state.outputName = generatedName;
             updateProgress("Ready to download", 5, 5);
             showOperationMessage("✓ GPS metadata successfully written and verified", "success");
+            elements.downloadOptions.hidden = false;
             elements.downloadButton.hidden = false;
+            elements.formatLimitCopy.textContent = "JPEG keeps the verified GPS metadata. PNG and WebP exports contain the image only; those formats will not retain the GPS metadata.";
+            updateDownloadOptions();
         } catch (error) {
             console.error("EXIF writing or verification failed:", error);
             showOperationMessage("Metadata verification failed. The image was not marked as successfully geotagged. Check that the JPEG is valid and try again.", "error");
@@ -758,18 +759,72 @@
         state.outputBlob = null;
         state.outputName = "";
         elements.downloadButton.hidden = true;
+        elements.downloadOptions.hidden = true;
+        elements.formatLimitCopy.textContent = "GPS writing is supported for JPEG images. Other formats can be previewed, but not reliably edited.";
         elements.writeProgress.hidden = true;
         elements.progressBar.style.width = "0%";
     }
 
-    function generateDownload() {
+    function updateDownloadOptions() {
+        const format = elements.outputFormat.value;
+        const labels = { jpeg: "geotagged JPEG", png: "PNG image", webp: "WebP image" };
+        elements.downloadButton.querySelector("span").textContent = `Download ${labels[format]}`;
+    }
+
+    async function generateDownload() {
         if (!state.outputBlob || !state.outputUrl || !state.outputName) return;
+        const format = elements.outputFormat.value;
+        let downloadUrl = state.outputUrl;
+        let downloadName = state.outputName;
+        if (format !== "jpeg") {
+            elements.downloadButton.disabled = true;
+            try {
+                const image = await loadImage(state.outputUrl);
+                const canvas = document.createElement("canvas");
+                canvas.width = image.naturalWidth;
+                canvas.height = image.naturalHeight;
+                canvas.getContext("2d").drawImage(image, 0, 0);
+                const mimeType = format === "png" ? "image/png" : "image/webp";
+                const convertedBlob = await new Promise((resolve) => canvas.toBlob(resolve, mimeType, 0.92));
+                if (!convertedBlob || convertedBlob.type !== mimeType) {
+                    throw new Error(`Your browser could not export this image as ${format.toUpperCase()}.`);
+                }
+                downloadUrl = URL.createObjectURL(convertedBlob);
+                downloadName = state.outputName.replace(/\.jpe?g$/i, `.${format}`);
+            } catch (error) {
+                showOperationMessage(error.message || "The image could not be converted to the selected format.", "error");
+                elements.downloadButton.disabled = false;
+                return;
+            }
+            elements.downloadButton.disabled = false;
+        }
         const anchor = document.createElement("a");
-        anchor.href = state.outputUrl;
-        anchor.download = state.outputName;
+        anchor.href = downloadUrl;
+        anchor.download = downloadName;
         document.body.append(anchor);
         anchor.click();
         anchor.remove();
+        if (format !== "jpeg") window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    }
+
+    function loadImage(url) {
+        return new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error("The geotagged image could not be opened for conversion."));
+            image.src = url;
+        });
+    }
+
+    async function convertImageToJpegDataUrl(url) {
+        const image = await loadImage(url);
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Your browser could not prepare this image for GPS metadata.");
+        context.drawImage(image, 0, 0);
+        return canvas.toDataURL("image/jpeg", 0.92);
     }
 
     function makeOutputFilename(filename) {
