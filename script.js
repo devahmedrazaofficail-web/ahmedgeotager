@@ -38,7 +38,7 @@
         cacheElements();
         bindEvents();
         renderExifRows({});
-        if (!window.L) setMapMessage("The interactive map could not load. Coordinates and JPEG writing can still be used.", true);
+        if (!window.L) setMapMessage("The interactive map could not load. Coordinates can still be entered manually.", true);
     }
 
     function bindEvents() {
@@ -612,11 +612,11 @@
             showOperationMessage("✓ GPS metadata successfully written and verified", "success");
             elements.downloadOptions.hidden = false;
             elements.downloadButton.hidden = false;
-            elements.formatLimitCopy.textContent = "JPEG keeps the verified GPS metadata. PNG and WebP exports contain the image only; those formats will not retain the GPS metadata.";
+            elements.formatLimitCopy.textContent = "GPS metadata is embedded and verified in JPEG, PNG, and WebP downloads. Some photo apps may not display GPS tags in PNG or WebP.";
             updateDownloadOptions();
         } catch (error) {
             console.error("EXIF writing or verification failed:", error);
-            showOperationMessage("Metadata verification failed. The image was not marked as successfully geotagged. Check that the JPEG is valid and try again.", "error");
+            showOperationMessage("Metadata verification failed. The image was not marked as successfully geotagged. Check that the image is valid and try again.", "error");
             clearOutput();
         } finally {
             state.isWriting = false;
@@ -760,14 +760,14 @@
         state.outputName = "";
         elements.downloadButton.hidden = true;
         elements.downloadOptions.hidden = true;
-        elements.formatLimitCopy.textContent = "GPS writing is supported for JPEG images. Other formats can be previewed, but not reliably edited.";
+        elements.formatLimitCopy.textContent = "GPS metadata will be embedded in the selected JPEG, PNG, or WebP download.";
         elements.writeProgress.hidden = true;
         elements.progressBar.style.width = "0%";
     }
 
     function updateDownloadOptions() {
         const format = elements.outputFormat.value;
-        const labels = { jpeg: "geotagged JPEG", png: "PNG image", webp: "WebP image" };
+        const labels = { jpeg: "geotagged JPEG", png: "geotagged PNG", webp: "geotagged WebP" };
         elements.downloadButton.querySelector("span").textContent = `Download ${labels[format]}`;
     }
 
@@ -789,7 +789,18 @@
                 if (!convertedBlob || convertedBlob.type !== mimeType) {
                     throw new Error(`Your browser could not export this image as ${format.toUpperCase()}.`);
                 }
-                downloadUrl = URL.createObjectURL(convertedBlob);
+                const gps = await window.exifr.gps(state.outputBlob);
+                const exifTiff = await extractExifTiff(state.outputBlob);
+                const taggedBlob = format === "png"
+                    ? await addPngExif(convertedBlob, exifTiff)
+                    : await addWebpExif(convertedBlob, exifTiff, image.naturalWidth, image.naturalHeight);
+                const verified = format === "png"
+                    ? await verifyExifMetadata(taggedBlob, gps)
+                    : await verifyWebpMetadata(taggedBlob, gps);
+                if (!verified) {
+                    throw new Error(`GPS metadata could not be verified in the ${format.toUpperCase()} export.`);
+                }
+                downloadUrl = URL.createObjectURL(taggedBlob);
                 downloadName = state.outputName.replace(/\.jpe?g$/i, `.${format}`);
             } catch (error) {
                 showOperationMessage(error.message || "The image could not be converted to the selected format.", "error");
@@ -805,6 +816,154 @@
         anchor.click();
         anchor.remove();
         if (format !== "jpeg") window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    }
+
+    async function extractExifTiff(jpegBlob) {
+        const bytes = new Uint8Array(await jpegBlob.arrayBuffer());
+        if (bytes[0] !== 0xff || bytes[1] !== 0xd8) throw new Error("The tagged JPEG could not be read.");
+        for (let offset = 2; offset + 4 <= bytes.length;) {
+            if (bytes[offset] !== 0xff) break;
+            const marker = bytes[offset + 1];
+            if (marker === 0xda || marker === 0xd9) break;
+            const segmentLength = (bytes[offset + 2] << 8) | bytes[offset + 3];
+            const payloadStart = offset + 4;
+            const payloadEnd = offset + 2 + segmentLength;
+            if (payloadEnd > bytes.length) break;
+            if (marker === 0xe1 && bytes[payloadStart] === 0x45 && bytes[payloadStart + 1] === 0x78 && bytes[payloadStart + 2] === 0x69 && bytes[payloadStart + 3] === 0x66 && bytes[payloadStart + 4] === 0 && bytes[payloadStart + 5] === 0) {
+                return bytes.slice(payloadStart + 6, payloadEnd);
+            }
+            offset = payloadEnd;
+        }
+        throw new Error("The verified JPEG does not contain an EXIF GPS block.");
+    }
+
+    async function verifyWebpMetadata(blob, expected) {
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        for (let offset = 12; offset + 8 <= bytes.length;) {
+            const type = String.fromCharCode(...bytes.subarray(offset, offset + 4));
+            const length = new DataView(bytes.buffer, bytes.byteOffset + offset + 4, 4).getUint32(0, true);
+            const payloadStart = offset + 8;
+            const payloadEnd = payloadStart + length;
+            if (payloadEnd > bytes.length) return false;
+            if (type === "EXIF") {
+                const hasExifPrefix = length >= 6 && bytes[payloadStart] === 0x45 && bytes[payloadStart + 1] === 0x78 && bytes[payloadStart + 2] === 0x69 && bytes[payloadStart + 3] === 0x66 && bytes[payloadStart + 4] === 0 && bytes[payloadStart + 5] === 0;
+                const tiff = bytes.slice(payloadStart + (hasExifPrefix ? 6 : 0), payloadEnd);
+                const metadata = await window.exifr.parse(new Blob([tiff], { type: "image/tiff" }), { tiff: true, exif: true, gps: true });
+                const gps = metadata && { latitude: metadata.latitude, longitude: metadata.longitude };
+                const tolerance = 5e-10;
+                return Number.isFinite(gps?.latitude) && Number.isFinite(gps?.longitude)
+                    && Math.abs(gps.latitude - expected.latitude) <= tolerance
+                    && Math.abs(gps.longitude - expected.longitude) <= tolerance;
+            }
+            offset = payloadStart + length + (length & 1);
+        }
+        return false;
+    }
+
+    async function addPngExif(blob, exifTiff) {
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+        if (!signature.every((byte, index) => bytes[index] === byte)) throw new Error("The PNG export is invalid.");
+        let insertionOffset = 8;
+        while (insertionOffset + 12 <= bytes.length) {
+            const length = new DataView(bytes.buffer, bytes.byteOffset + insertionOffset, 4).getUint32(0);
+            const type = String.fromCharCode(...bytes.subarray(insertionOffset + 4, insertionOffset + 8));
+            if (type === "IDAT") break;
+            insertionOffset += 12 + length;
+        }
+        if (insertionOffset > bytes.length) throw new Error("The PNG export has an invalid chunk layout.");
+        const exifChunk = makePngChunk("eXIf", exifTiff);
+        return new Blob([bytes.subarray(0, insertionOffset), exifChunk, bytes.subarray(insertionOffset)], { type: "image/png" });
+    }
+
+    function makePngChunk(type, data) {
+        const typeBytes = new TextEncoder().encode(type);
+        const chunk = new Uint8Array(12 + data.length);
+        const view = new DataView(chunk.buffer);
+        view.setUint32(0, data.length);
+        chunk.set(typeBytes, 4);
+        chunk.set(data, 8);
+        view.setUint32(8 + data.length, crc32(chunk.subarray(4, 8 + data.length)));
+        return chunk;
+    }
+
+    function crc32(bytes) {
+        let crc = 0xffffffff;
+        for (const byte of bytes) {
+            crc ^= byte;
+            for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+        }
+        return (crc ^ 0xffffffff) >>> 0;
+    }
+
+    async function addWebpExif(blob, exifTiff, width, height) {
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        if (String.fromCharCode(...bytes.subarray(0, 4)) !== "RIFF" || String.fromCharCode(...bytes.subarray(8, 12)) !== "WEBP") {
+            throw new Error("The WebP export is invalid.");
+        }
+        const chunks = [];
+        let hasExtendedHeader = false;
+        let extendedHeader = null;
+        let hasAlpha = false;
+        for (let offset = 12; offset + 8 <= bytes.length;) {
+            const type = String.fromCharCode(...bytes.subarray(offset, offset + 4));
+            const length = new DataView(bytes.buffer, bytes.byteOffset + offset + 4, 4).getUint32(0, true);
+            const end = offset + 8 + length + (length & 1);
+            if (end > bytes.length) throw new Error("The WebP export has an invalid chunk layout.");
+            if (type === "VP8X") {
+                hasExtendedHeader = true;
+                extendedHeader = bytes.slice(offset, end);
+                chunks.push(extendedHeader);
+            } else if (type !== "EXIF") {
+                if (type === "ALPH" || (type === "VP8L" && (bytes[offset + 12] & 0x01))) hasAlpha = true;
+                chunks.push(bytes.slice(offset, end));
+            }
+            offset = end;
+        }
+        if (extendedHeader) extendedHeader[8] |= 0x08 | (hasAlpha ? 0x10 : 0);
+        if (!hasExtendedHeader) {
+            const header = new Uint8Array(18);
+            header.set(new TextEncoder().encode("VP8X"), 0);
+            new DataView(header.buffer).setUint32(4, 10, true);
+            header[8] = 0x08 | (hasAlpha ? 0x10 : 0);
+            writeUint24(header, 12, width - 1);
+            writeUint24(header, 15, height - 1);
+            chunks.unshift(header);
+        }
+        const exifPayload = new Uint8Array(6 + exifTiff.length);
+        exifPayload.set([0x45, 0x78, 0x69, 0x66, 0, 0]);
+        exifPayload.set(exifTiff, 6);
+        chunks.push(makeWebpChunk("EXIF", exifPayload));
+        const body = concatBytes(...chunks);
+        const output = new Uint8Array(12 + body.length);
+        output.set(bytes.subarray(0, 12));
+        new DataView(output.buffer).setUint32(4, output.length - 8, true);
+        output.set(body, 12);
+        return new Blob([output], { type: "image/webp" });
+    }
+
+    function writeUint24(bytes, offset, value) {
+        bytes[offset] = value & 0xff;
+        bytes[offset + 1] = (value >>> 8) & 0xff;
+        bytes[offset + 2] = (value >>> 16) & 0xff;
+    }
+
+    function makeWebpChunk(type, data) {
+        const chunk = new Uint8Array(8 + data.length + (data.length & 1));
+        chunk.set(new TextEncoder().encode(type), 0);
+        new DataView(chunk.buffer).setUint32(4, data.length, true);
+        chunk.set(data, 8);
+        return chunk;
+    }
+
+    function concatBytes(...parts) {
+        const output = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+        let offset = 0;
+        for (const part of parts) {
+            output.set(part, offset);
+            offset += part.length;
+        }
+        return output;
     }
 
     function loadImage(url) {

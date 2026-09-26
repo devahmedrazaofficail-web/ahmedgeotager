@@ -5,7 +5,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description"
-        content="Free online image geotagging tool. Add GPS latitude and longitude metadata to JPEG photos directly in your browser. No uploads required.">
+        content="Free online image geotagging tool. Add GPS latitude and longitude metadata to JPEG, PNG, and WebP photos directly in your browser. No uploads required.">
     <meta name="theme-color" content="#f6f8fb">
     <title>Free Image Geotagging Tool – Add GPS Metadata to Photos</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -211,9 +211,9 @@
                             <div class="field">
                                 <label for="output-format">Download format</label>
                                 <select id="output-format">
-                                    <option value="jpeg">JPEG · keeps GPS metadata</option>
-                                    <option value="png">PNG · image only</option>
-                                    <option value="webp">WebP · image only</option>
+                                    <option value="jpeg">JPEG · GPS metadata</option>
+                                    <option value="png">PNG · GPS metadata</option>
+                                    <option value="webp">WebP · GPS metadata</option>
                                 </select>
                             </div>
                             <button id="download-button" class="button button-download" type="button"><svg
@@ -221,9 +221,9 @@
                                     <path d="M10 2.8v9.4m0 0 3.3-3.3M10 12.2 6.7 8.9M3.5 13.7v2.8h13v-2.8" />
                                 </svg><span>Download geotagged JPEG</span></button>
                         </div>
-                        <p class="format-limit"><span class="format-limit-dot"></span><span id="format-limit-copy">All
-                                supported images are saved as JPEG to preserve GPS metadata. PNG and WebP downloads
-                                contain image pixels only.</span></p>
+                        <p class="format-limit"><span class="format-limit-dot"></span><span id="format-limit-copy">GPS
+                                metadata is embedded in JPEG, PNG, and WebP downloads. Some photo apps may not display
+                                GPS tags in PNG or WebP.</span></p>
                     </section>
 
                     <section class="panel existing-panel" aria-labelledby="existing-heading">
@@ -264,13 +264,13 @@
                 </article>
                 <article class="guide-item"><span class="guide-number">02</span>
                     <h3>How does GPS metadata work?</h3>
-                    <p>JPEG photos can store latitude and longitude in EXIF GPS tags. Coordinates are encoded as
-                        degrees, minutes, and seconds with a direction reference.</p>
+                    <p>JPEG, PNG, and WebP photos can store latitude and longitude in EXIF GPS tags. Coordinates are
+                        encoded as degrees, minutes, and seconds with a direction reference.</p>
                 </article>
                 <article class="guide-item"><span class="guide-number">03</span>
                     <h3>How to geotag a photo</h3>
-                    <p>Choose a JPEG, select a map location or enter coordinates, then write and verify the GPS tags
-                        before downloading the updated original.</p>
+                    <p>Choose a photo, select a map location or enter coordinates, then write and verify the GPS tags
+                        before downloading it as JPEG, PNG, or WebP.</p>
                 </article>
                 <article class="guide-item"><span class="guide-number">04</span>
                     <h3>Is my photo uploaded?</h3>
