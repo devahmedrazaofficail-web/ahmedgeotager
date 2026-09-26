@@ -857,6 +857,13 @@ h1 {
     font-size: 10px;
 }
 
+.field-hint {
+    margin: 5px 0 0;
+    color: #8490a0;
+    font-size: 10px;
+    line-height: 1.45;
+}
+
 .apply-button {
     width: 100%;
     min-height: 36px;

@@ -8,7 +8,6 @@
         content="Free online image geotagging tool. Add GPS latitude and longitude metadata to JPEG, PNG, and WebP photos directly in your browser. No uploads required.">
     <meta name="theme-color" content="#f6f8fb">
     <title>Free Image Geotagging Tool – Add GPS Metadata to Photos</title>
-    <meta name="google-site-verification" content="F0d_7lRP10eHQ_Gj4hgsdQp5YDmYtG55Tp5Wyn93kp4" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -216,6 +215,14 @@
                                     <option value="png">PNG · GPS metadata</option>
                                     <option value="webp">WebP · GPS metadata</option>
                                 </select>
+                            </div>
+                            <div class="field">
+                                <label for="compression-target">Maximum file size <span class="optional">optional ·
+                                        KB</span></label>
+                                <input id="compression-target" type="number" min="1" step="1" inputmode="numeric"
+                                    placeholder="e.g. 100" aria-describedby="compression-hint">
+                                <p id="compression-hint" class="field-hint">Leave blank to keep the current quality.
+                                    JPEG and WebP reduce quality; PNG is resized.</p>
                             </div>
                             <button id="download-button" class="button button-download" type="button"><svg
                                     viewBox="0 0 20 20" aria-hidden="true">

@@ -30,7 +30,7 @@
             "latitude", "longitude", "latitude-error", "longitude-error", "apply-coordinates", "altitude", "altitude-error",
             "direction", "direction-error", "gps-time", "gps-time-error", "title", "description", "keywords", "artist",
             "copyright", "date-taken", "write-button", "write-progress", "progress-label", "progress-step", "progress-bar",
-            "operation-message", "download-options", "output-format", "download-button", "format-limit-copy", "existing-details", "exif-status", "exif-list", "reset-dialog", "confirm-reset"
+            "operation-message", "download-options", "output-format", "compression-target", "download-button", "format-limit-copy", "existing-details", "exif-status", "exif-list", "reset-dialog", "confirm-reset"
         ].forEach((id) => { elements[id.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = document.getElementById(id); });
     }
 
@@ -774,34 +774,46 @@
     async function generateDownload() {
         if (!state.outputBlob || !state.outputUrl || !state.outputName) return;
         const format = elements.outputFormat.value;
+        const targetText = elements.compressionTarget.value.trim();
+        const targetKb = targetText ? Number(targetText) : null;
+        if (targetKb !== null && (!Number.isFinite(targetKb) || targetKb <= 0 || targetKb > Number.MAX_SAFE_INTEGER / 1024)) {
+            showOperationMessage("Enter a valid maximum file size greater than 0 KB.", "error");
+            elements.compressionTarget.focus();
+            return;
+        }
         let downloadUrl = state.outputUrl;
         let downloadName = state.outputName;
-        if (format !== "jpeg") {
+        if (format !== "jpeg" || targetKb !== null) {
             elements.downloadButton.disabled = true;
             try {
                 const image = await loadImage(state.outputUrl);
-                const canvas = document.createElement("canvas");
-                canvas.width = image.naturalWidth;
-                canvas.height = image.naturalHeight;
-                canvas.getContext("2d").drawImage(image, 0, 0);
-                const mimeType = format === "png" ? "image/png" : "image/webp";
-                const convertedBlob = await new Promise((resolve) => canvas.toBlob(resolve, mimeType, 0.92));
-                if (!convertedBlob || convertedBlob.type !== mimeType) {
-                    throw new Error(`Your browser could not export this image as ${format.toUpperCase()}.`);
-                }
                 const gps = await window.exifr.gps(state.outputBlob);
                 const exifTiff = await extractExifTiff(state.outputBlob);
-                const taggedBlob = format === "png"
-                    ? await addPngExif(convertedBlob, exifTiff)
-                    : await addWebpExif(convertedBlob, exifTiff, image.naturalWidth, image.naturalHeight);
-                const verified = format === "png"
+                let taggedBlob;
+                if (targetKb !== null) {
+                    taggedBlob = await createTargetSizeImage(image, format, targetKb * 1024, exifTiff);
+                } else {
+                    const canvas = document.createElement("canvas");
+                    canvas.width = image.naturalWidth;
+                    canvas.height = image.naturalHeight;
+                    canvas.getContext("2d").drawImage(image, 0, 0);
+                    const mimeType = format === "png" ? "image/png" : "image/webp";
+                    const convertedBlob = await canvasToBlob(canvas, mimeType, 0.92);
+                    taggedBlob = await attachExif(convertedBlob, format, exifTiff, image.naturalWidth, image.naturalHeight);
+                }
+                const verified = format === "jpeg"
                     ? await verifyExifMetadata(taggedBlob, gps)
-                    : await verifyWebpMetadata(taggedBlob, gps);
+                    : format === "png"
+                        ? await verifyExifMetadata(taggedBlob, gps)
+                        : await verifyWebpMetadata(taggedBlob, gps);
                 if (!verified) {
                     throw new Error(`GPS metadata could not be verified in the ${format.toUpperCase()} export.`);
                 }
                 downloadUrl = URL.createObjectURL(taggedBlob);
-                downloadName = state.outputName.replace(/\.jpe?g$/i, `.${format}`);
+                downloadName = format === "jpeg" ? state.outputName : state.outputName.replace(/\.jpe?g$/i, `.${format}`);
+                if (targetKb !== null) {
+                    showOperationMessage(`Download compressed to ${formatBytes(taggedBlob.size)} (maximum ${formatBytes(targetKb * 1024)}).`, "success");
+                }
             } catch (error) {
                 showOperationMessage(error.message || "The image could not be converted to the selected format.", "error");
                 elements.downloadButton.disabled = false;
@@ -815,7 +827,89 @@
         document.body.append(anchor);
         anchor.click();
         anchor.remove();
-        if (format !== "jpeg") window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+        if (downloadUrl !== state.outputUrl) window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    }
+
+    async function createTargetSizeImage(image, format, targetBytes, exifTiff) {
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        const mimeType = format === "jpeg" ? "image/jpeg" : format === "png" ? "image/png" : "image/webp";
+        let width = image.naturalWidth;
+        let height = image.naturalHeight;
+
+        for (let resizeAttempt = 0; resizeAttempt < 32; resizeAttempt += 1) {
+            canvas.width = width;
+            canvas.height = height;
+            context.drawImage(image, 0, 0, width, height);
+
+            let bestBlob = null;
+            let largestUnderTarget = 0.05;
+            let smallestOverTarget = 0.95;
+            const minimumQualityBlob = await encodeAndAttach(0.05);
+            if (minimumQualityBlob.size <= targetBytes) {
+                bestBlob = minimumQualityBlob;
+                if (format !== "png") {
+                    for (let qualityAttempt = 0; qualityAttempt < 9; qualityAttempt += 1) {
+                        const quality = (largestUnderTarget + smallestOverTarget) / 2;
+                        const candidate = await encodeAndAttach(quality);
+                        if (candidate.size <= targetBytes) {
+                            bestBlob = candidate;
+                            largestUnderTarget = quality;
+                        } else {
+                            smallestOverTarget = quality;
+                        }
+                    }
+                }
+                return bestBlob;
+            }
+
+            if (width === 1 && height === 1) break;
+            const scale = Math.min(0.85, Math.sqrt(targetBytes / minimumQualityBlob.size) * 0.9);
+            const nextWidth = Math.max(1, Math.floor(width * scale));
+            const nextHeight = Math.max(1, Math.floor(height * scale));
+            width = nextWidth === width && width > 1 ? width - 1 : nextWidth;
+            height = nextHeight === height && height > 1 ? height - 1 : nextHeight;
+        }
+
+        throw new Error("This image cannot fit within that size limit, even at the smallest usable dimensions.");
+
+        async function encodeAndAttach(quality) {
+            const encodedBlob = await canvasToBlob(canvas, mimeType, format === "png" ? undefined : quality);
+            return attachExif(encodedBlob, format, exifTiff, width, height);
+        }
+    }
+
+    function canvasToBlob(canvas, mimeType, quality) {
+        return new Promise((resolve, reject) => {
+            canvas.toBlob((blob) => {
+                if (!blob || blob.type !== mimeType) {
+                    reject(new Error(`Your browser could not export this image as ${mimeType.replace("image/", "").toUpperCase()}.`));
+                    return;
+                }
+                resolve(blob);
+            }, mimeType, quality);
+        });
+    }
+
+    function attachExif(blob, format, exifTiff, width, height) {
+        if (format === "jpeg") return addJpegExif(blob, exifTiff);
+        if (format === "png") return addPngExif(blob, exifTiff);
+        return addWebpExif(blob, exifTiff, width, height);
+    }
+
+    async function addJpegExif(blob, exifTiff) {
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        if (bytes[0] !== 0xff || bytes[1] !== 0xd8) throw new Error("The compressed JPEG export is invalid.");
+        const exifPrefix = new Uint8Array([0x45, 0x78, 0x69, 0x66, 0, 0]);
+        const payloadLength = exifPrefix.length + exifTiff.length;
+        if (payloadLength > 65533) throw new Error("The photo metadata is too large to fit in a JPEG file.");
+        const segment = new Uint8Array(payloadLength + 4);
+        segment[0] = 0xff;
+        segment[1] = 0xe1;
+        new DataView(segment.buffer).setUint16(2, payloadLength + 2);
+        segment.set(exifPrefix, 4);
+        segment.set(exifTiff, 10);
+        return new Blob([bytes.subarray(0, 2), segment, bytes.subarray(2)], { type: "image/jpeg" });
     }
 
     async function extractExifTiff(jpegBlob) {
