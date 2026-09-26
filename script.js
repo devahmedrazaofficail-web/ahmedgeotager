@@ -848,6 +848,8 @@
             if (type === "EXIF") {
                 const hasExifPrefix = length >= 6 && bytes[payloadStart] === 0x45 && bytes[payloadStart + 1] === 0x78 && bytes[payloadStart + 2] === 0x69 && bytes[payloadStart + 3] === 0x66 && bytes[payloadStart + 4] === 0 && bytes[payloadStart + 5] === 0;
                 const tiff = bytes.slice(payloadStart + (hasExifPrefix ? 6 : 0), payloadEnd);
+                if (!(tiff[0] === 0x49 && tiff[1] === 0x49 && tiff[2] === 0x2a && tiff[3] === 0)
+                    && !(tiff[0] === 0x4d && tiff[1] === 0x4d && tiff[2] === 0 && tiff[3] === 0x2a)) return false;
                 const metadata = await window.exifr.parse(new Blob([tiff], { type: "image/tiff" }), { tiff: true, exif: true, gps: true });
                 const gps = metadata && { latitude: metadata.latitude, longitude: metadata.longitude };
                 const tolerance = 5e-10;
@@ -915,7 +917,7 @@
                 extendedHeader = bytes.slice(offset, end);
                 chunks.push(extendedHeader);
             } else if (type !== "EXIF") {
-                if (type === "ALPH" || (type === "VP8L" && (bytes[offset + 12] & 0x01))) hasAlpha = true;
+                if (type === "ALPH" || (type === "VP8L" && (bytes[offset + 12] & 0x10))) hasAlpha = true;
                 chunks.push(bytes.slice(offset, end));
             }
             offset = end;
@@ -930,10 +932,7 @@
             writeUint24(header, 15, height - 1);
             chunks.unshift(header);
         }
-        const exifPayload = new Uint8Array(6 + exifTiff.length);
-        exifPayload.set([0x45, 0x78, 0x69, 0x66, 0, 0]);
-        exifPayload.set(exifTiff, 6);
-        chunks.push(makeWebpChunk("EXIF", exifPayload));
+        chunks.push(makeWebpChunk("EXIF", exifTiff));
         const body = concatBytes(...chunks);
         const output = new Uint8Array(12 + body.length);
         output.set(bytes.subarray(0, 12));
