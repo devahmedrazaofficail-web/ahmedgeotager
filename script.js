@@ -624,7 +624,7 @@
                 };
                 try {
                     const output = await createGeotaggedImage(file, coordinates, progress);
-                    state.outputs.push(output);
+                    state.outputs.push({ ...output, sourceIndex: index });
                     updateBatchFileStatus(index, `Geotagged · ${formatBytes(output.blob.size)}`);
                 } catch (error) {
                     failed += 1;
@@ -643,12 +643,13 @@
                 elements.downloadButton.hidden = false;
                 elements.batchDownloadButton.hidden = true;
                 elements.formatLimitCopy.textContent = "GPS metadata is embedded and verified in JPEG, PNG, and WebP downloads. Some photo apps may not display GPS tags in PNG or WebP.";
-                updateDownloadOptions();
             } else {
-                elements.downloadOptions.hidden = true;
+                elements.downloadOptions.hidden = false;
+                elements.downloadButton.hidden = true;
                 elements.batchDownloadButton.hidden = false;
-                elements.formatLimitCopy.textContent = "The ZIP archive contains successfully geotagged JPEGs. Files marked failed are not included.";
+                elements.formatLimitCopy.textContent = "Choose an image format and optional maximum size per photo, then download the batch as a ZIP.";
             }
+            updateDownloadOptions();
             updateProgress("Batch complete", state.files.length, state.files.length);
             showOperationMessage(
                 failed ? `Geotagged ${state.outputs.length} of ${state.files.length} photos. Failed images are marked in the list.` : state.outputs.length === 1 ? "GPS metadata successfully written and verified" : `GPS metadata successfully written and verified for all ${state.outputs.length} photos.`,
@@ -849,6 +850,11 @@
         const format = elements.outputFormat.value;
         const labels = { jpeg: "geotagged JPEG", png: "geotagged PNG", webp: "geotagged WebP" };
         elements.downloadButton.querySelector("span").textContent = `Download ${labels[format]}`;
+        elements.batchDownloadButton.querySelector("span").textContent = `Download all as ZIP (${format.toUpperCase()})`;
+        const hint = state.files.length > 1
+            ? "Leave blank to keep the current quality. The maximum size applies to each exported photo. JPEG and WebP reduce quality; PNG is resized."
+            : "Leave blank to keep the current quality. JPEG and WebP reduce quality; PNG is resized.";
+        document.getElementById("compression-hint").textContent = hint;
     }
 
     async function generateDownload() {
@@ -866,33 +872,11 @@
         if (format !== "jpeg" || targetKb !== null) {
             elements.downloadButton.disabled = true;
             try {
-                const image = await loadImage(state.outputUrl);
-                const gps = await window.exifr.gps(state.outputBlob);
-                const exifTiff = await extractExifTiff(state.outputBlob);
-                let taggedBlob;
+                const converted = await createDownloadOutput({ blob: state.outputBlob, name: state.outputName }, format, targetKb);
+                downloadUrl = URL.createObjectURL(converted.blob);
+                downloadName = converted.name;
                 if (targetKb !== null) {
-                    taggedBlob = await createTargetSizeImage(image, format, targetKb * 1024, exifTiff);
-                } else {
-                    const canvas = document.createElement("canvas");
-                    canvas.width = image.naturalWidth;
-                    canvas.height = image.naturalHeight;
-                    canvas.getContext("2d").drawImage(image, 0, 0);
-                    const mimeType = format === "png" ? "image/png" : "image/webp";
-                    const convertedBlob = await canvasToBlob(canvas, mimeType, 0.92);
-                    taggedBlob = await attachExif(convertedBlob, format, exifTiff, image.naturalWidth, image.naturalHeight);
-                }
-                const verified = format === "jpeg"
-                    ? await verifyExifMetadata(taggedBlob, gps)
-                    : format === "png"
-                        ? await verifyExifMetadata(taggedBlob, gps)
-                        : await verifyWebpMetadata(taggedBlob, gps);
-                if (!verified) {
-                    throw new Error(`GPS metadata could not be verified in the ${format.toUpperCase()} export.`);
-                }
-                downloadUrl = URL.createObjectURL(taggedBlob);
-                downloadName = format === "jpeg" ? state.outputName : state.outputName.replace(/\.jpe?g$/i, `.${format}`);
-                if (targetKb !== null) {
-                    showOperationMessage(`Download compressed to ${formatBytes(taggedBlob.size)} (maximum ${formatBytes(targetKb * 1024)}).`, "success");
+                    showOperationMessage(`Download compressed to ${formatBytes(converted.blob.size)} (maximum ${formatBytes(targetKb * 1024)}).`, "success");
                 }
             } catch (error) {
                 showOperationMessage(error.message || "The image could not be converted to the selected format.", "error");
@@ -910,24 +894,80 @@
         if (downloadUrl !== state.outputUrl) window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
     }
 
+    async function createDownloadOutput(output, format, targetKb) {
+        if (format === "jpeg" && targetKb === null) return output;
+        const sourceUrl = URL.createObjectURL(output.blob);
+        try {
+            const image = await loadImage(sourceUrl);
+            const gps = await window.exifr.gps(output.blob);
+            const exifTiff = await extractExifTiff(output.blob);
+            let taggedBlob;
+            if (targetKb !== null) {
+                taggedBlob = await createTargetSizeImage(image, format, targetKb * 1024, exifTiff);
+            } else {
+                const canvas = document.createElement("canvas");
+                canvas.width = image.naturalWidth;
+                canvas.height = image.naturalHeight;
+                const context = canvas.getContext("2d");
+                if (!context) throw new Error("Your browser could not prepare this image for export.");
+                context.drawImage(image, 0, 0);
+                const mimeType = format === "png" ? "image/png" : "image/webp";
+                const convertedBlob = await canvasToBlob(canvas, mimeType, 0.92);
+                taggedBlob = await attachExif(convertedBlob, format, exifTiff, image.naturalWidth, image.naturalHeight);
+            }
+            const verified = format === "webp"
+                ? await verifyWebpMetadata(taggedBlob, gps)
+                : await verifyExifMetadata(taggedBlob, gps);
+            if (!verified) throw new Error(`GPS metadata could not be verified in the ${format.toUpperCase()} export.`);
+            return {
+                blob: taggedBlob,
+                name: format === "jpeg" ? output.name : output.name.replace(/\.jpe?g$/i, `.${format}`)
+            };
+        } finally {
+            URL.revokeObjectURL(sourceUrl);
+        }
+    }
+
     async function downloadBatch() {
         if (!state.outputs.length) return;
         if (!window.JSZip) {
             showOperationMessage("The ZIP tool did not load. Check your connection and reload the page before downloading the batch.", "error");
             return;
         }
+        const format = elements.outputFormat.value;
+        const targetText = elements.compressionTarget.value.trim();
+        const targetKb = targetText ? Number(targetText) : null;
+        if (targetKb !== null && (!Number.isFinite(targetKb) || targetKb <= 0 || targetKb > Number.MAX_SAFE_INTEGER / 1024)) {
+            showOperationMessage("Enter a valid maximum file size greater than 0 KB.", "error");
+            elements.compressionTarget.focus();
+            return;
+        }
         elements.batchDownloadButton.disabled = true;
         try {
             const zip = new window.JSZip();
             const usedNames = new Map();
-            state.outputs.forEach((output) => {
-                const dot = output.name.lastIndexOf(".");
-                const stem = dot > 0 ? output.name.slice(0, dot) : output.name;
-                const extension = dot > 0 ? output.name.slice(dot) : "";
-                const count = usedNames.get(output.name) || 0;
-                usedNames.set(output.name, count + 1);
-                zip.file(count ? `${stem} (${count + 1})${extension}` : output.name, output.blob);
-            });
+            let exported = 0;
+            for (let index = 0; index < state.outputs.length; index += 1) {
+                const output = state.outputs[index];
+                try {
+                    const converted = await createDownloadOutput(output, format, targetKb);
+                    const dot = converted.name.lastIndexOf(".");
+                    const stem = dot > 0 ? converted.name.slice(0, dot) : converted.name;
+                    const extension = dot > 0 ? converted.name.slice(dot) : "";
+                    const count = usedNames.get(converted.name) || 0;
+                    usedNames.set(converted.name, count + 1);
+                    const uniqueName = count ? `${stem} (${count + 1})${extension}` : converted.name;
+                    zip.file(uniqueName, converted.blob);
+                    updateBatchFileStatus(output.sourceIndex, `Ready · ${formatBytes(converted.blob.size)}`);
+                    exported += 1;
+                } catch (error) {
+                    console.error(`Could not export ${output.name}:`, error);
+                    updateBatchFileStatus(output.sourceIndex, "Export failed", true);
+                }
+                updateProgress(`Preparing ${index + 1}/${state.outputs.length} for ZIP`, index + 1, state.outputs.length);
+                await nextPaint();
+            }
+            if (!exported) throw new Error(`No photos could be exported as ${format.toUpperCase()} with the selected size limit.`);
             const archive = await zip.generateAsync({ type: "blob" });
             const url = URL.createObjectURL(archive);
             const anchor = document.createElement("a");
@@ -937,7 +977,9 @@
             anchor.click();
             anchor.remove();
             window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-            showOperationMessage(`Downloaded ${state.outputs.length} geotagged JPEG photos as a ZIP archive.`, "success");
+            const skipped = state.files.length - exported;
+            const sizeNote = targetKb === null ? "" : `, maximum ${formatBytes(targetKb * 1024)} each`;
+            showOperationMessage(`Downloaded ${exported} geotagged ${format.toUpperCase()} ${exported === 1 ? "photo" : "photos"}${sizeNote} as a ZIP archive${skipped ? `; ${skipped} could not be exported` : ""}.`, skipped ? "error" : "success");
         } catch (error) {
             console.error("ZIP generation failed:", error);
             showOperationMessage("The ZIP archive could not be created. Try downloading the batch again.", "error");
